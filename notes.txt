@@ -1,0 +1,21 @@
+in third_party/freertos
+	copy license
+	copy FreeRTOS/src/*
+	In third_party/freertos/portable delete everything except GCC,MemMang,readme 
+	In third_party/freertos/portable/GCC delete everything except ARM_CM4F
+	
+Add include path (include and arm_cm4f)
+	properties->c/c++ build->settings->tool setting->compiler->include paths
+	
+Add your own FreeRTOSConfig.h ( it doesn't come with freertos source )
+	Copy board's FreeRTOSConfig.h from demo folder in freertos source
+	Disable Pendsv. systick and system svc handlers in ioc configuration and regenrate code
+	define SystemCoreClock for __GNUC__ 
+	disable configUSE_TICK_HOOK, configCHECK_FOR_STACK_OVERFLOW
+	Change HAL timer source to board's timer peripheral (ioc->system core->sys->timebase source e.g. TIM6)
+	
+Add freertos from stm32cube gui
+	go to ioc->middleware and software packs->FREERTOS->interface->cmsis v2
+	Change HAL timer source to board's timer peripheral (ioc->system core->sys->timebase source e.g. TIM6)
+	enable  ioc->middleware and software packs->FREERTOS->Advanced settings->USE_NEWLIB_REENTRANT
+	
