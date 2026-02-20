@@ -21,7 +21,8 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "FreeRTOS.h"
+#include "task.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -54,7 +55,29 @@ static void MX_GPIO_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+void green_led_task( void * args )
+{
+    for( ;; )
+    {
+    	 HAL_GPIO_TogglePin(GPIOG, GPIO_PIN_13);
 
+		// Delay for 500 milliseconds (0.5 seconds)
+		HAL_Delay(500);
+    }
+    vTaskDelete( NULL ); // Delete if task ever exits
+}
+
+void red_led_task( void * args )
+{
+    for( ;; )
+    {
+    	 HAL_GPIO_TogglePin(GPIOG,  GPIO_PIN_14);
+
+		// Delay for 500 milliseconds (0.5 seconds)
+		HAL_Delay(250);
+    }
+    vTaskDelete( NULL ); // Delete if task ever exits
+}
 /* USER CODE END 0 */
 
 /**
@@ -87,6 +110,29 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   /* USER CODE BEGIN 2 */
+  TaskHandle_t redLedHandle = NULL;
+  TaskHandle_t greenLedHandle = NULL;
+  BaseType_t status;
+
+  status = xTaskCreate(
+		  green_led_task,        /* Function implementing the task */
+          "green-led-task",           /* Text name for debugging */
+          200,       /* Stack size in words */
+          NULL,             /* Parameter passed */
+          2,
+		  //tskIDLE_PRIORITY + 1, /* Priority */
+          &greenLedHandle );
+  status = xTaskCreate(
+  		  red_led_task,        /* Function implementing the task */
+            "red-led-task",           /* Text name for debugging */
+            200,       /* Stack size in words */
+            NULL,             /* Parameter passed */
+            2,
+			//tskIDLE_PRIORITY + 1, /* Priority */
+            &redLedHandle );
+
+  //start the freeRTOS scheduler
+    vTaskStartScheduler();
 
   /* USER CODE END 2 */
 
@@ -94,6 +140,11 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+	  // Toggle the LED state (ON to OFF, or OFF to ON)
+	  HAL_GPIO_TogglePin(GPIOG, GPIO_PIN_13 | GPIO_PIN_14);
+
+	    // Delay for 500 milliseconds (0.5 seconds)
+	    HAL_Delay(500);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
