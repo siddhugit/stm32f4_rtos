@@ -43,11 +43,16 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
-
+UART_HandleTypeDef huart5;
 
 /* USER CODE BEGIN PV */
 UART_HandleTypeDef huart5;
 SemaphoreHandle_t xMutex;
+
+TaskHandle_t redLedHandle = NULL;
+TaskHandle_t greenLedHandle = NULL;
+TaskHandle_t userButtonHandle = NULL;
+TaskHandle_t volatile next_task_handle  = NULL;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -72,18 +77,28 @@ int __io_putchar(int ch)
 
 void green_led_task( void * args )
 {
-	uint32_t duration_in_ms = 6000;
+	uint32_t duration_in_ms = 800;
 	TickType_t last_wakeup_tick_count = xTaskGetTickCount();
+	BaseType_t  status;
     for( ;; )
     {
-    	printf("grn_led_task with vTaskDelay\r\n");
+    	//printf("grn_led_task with vTaskDelay\r\n");
     	 HAL_GPIO_TogglePin(GPIOG, GPIO_PIN_13);
-
 		// Delay for 500 milliseconds (0.5 seconds)
     	 //TickType_t xTicks = pdMS_TO_TICKS(duration_in_ms);
     	 TickType_t xTicks = pdMS_TO_TICKS(duration_in_ms);
+    	 status = xTaskNotifyWait(0,0,NULL,xTicks);
+    	 if(status == pdTRUE)
+    	 {
+    		 printf("deleting grn_led_task - 1\r\n");
+    		 vTaskSuspendAll();
+    		 next_task_handle = redLedHandle;
+    		 xTaskResumeAll();
+    		 printf("deleting grn_led_task -2\r\n");
+    		 vTaskDelete(NULL);
+    	 }
     	 //vTaskDelay(xTicks);
-    	 vTaskDelayUntil(&last_wakeup_tick_count, xTicks);
+    	 //vTaskDelayUntil(&last_wakeup_tick_count, xTicks);
     	 //HAL_Delay(500);
     }
     vTaskDelete( NULL ); // Delete if task ever exits
@@ -91,18 +106,60 @@ void green_led_task( void * args )
 
 void red_led_task( void * args )
 {
-	uint32_t duration_in_ms = 2000;
+	uint32_t duration_in_ms = 400;
 	TickType_t last_wakeup_tick_count = xTaskGetTickCount();
+	BaseType_t  status;
     for( ;; )
     {
-    	printf("red_led_task with vTaskDelay\r\n");
+    	//printf("red_led_task with vTaskDelay\r\n");
     	 HAL_GPIO_TogglePin(GPIOG,  GPIO_PIN_14);
 
 		// Delay for 500 milliseconds (0.5 seconds)
     	 //TickType_t xTicks = pdMS_TO_TICKS(duration_in_ms);
     	 TickType_t xTicks = pdMS_TO_TICKS(duration_in_ms);
+    	 status = xTaskNotifyWait(0,0,NULL,xTicks);
+		 if(status == pdTRUE)
+		 {
+			 printf("deleting red_led_task - 1\r\n");
+			 vTaskSuspendAll();
+			 next_task_handle = NULL;
+			 xTaskResumeAll();
+			 printf("deleting red_led_task - 2\r\n");
+			 vTaskDelete(NULL);
+		 }
     	 //vTaskDelay(xTicks);
-    	 vTaskDelayUntil(&last_wakeup_tick_count, xTicks);
+    	 //vTaskDelayUntil(&last_wakeup_tick_count, xTicks);
+		//HAL_Delay(250);
+    }
+    vTaskDelete( NULL ); // Delete if task ever exits
+}
+
+void user_button_task( void * args )
+{
+	uint32_t duration_in_ms = 10;
+	TickType_t last_wakeup_tick_count = xTaskGetTickCount();
+	uint8_t btn_read = 0;
+	uint8_t prev_read = 0;
+    for( ;; )
+    {
+    	btn_read  = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0);
+    	//printf("user_button_task with vTaskDelay\r\n");
+    	if (!btn_read)
+    	{
+    		if (prev_read)
+    		{
+    			printf("User button is pressed - 1\r\n");
+    			xTaskNotify(next_task_handle,0,eNoAction);
+    			printf("User button is pressed - 2\r\n");
+    		}
+    	}
+
+		// Delay for 500 milliseconds (0.5 seconds)
+    	 //TickType_t xTicks = pdMS_TO_TICKS(duration_in_ms);
+    	 TickType_t xTicks = pdMS_TO_TICKS(duration_in_ms);
+    	 vTaskDelay(xTicks);
+    	 prev_read = btn_read;
+    	 //vTaskDelayUntil(&last_wakeup_tick_count, xTicks);
 		//HAL_Delay(250);
     }
     vTaskDelete( NULL ); // Delete if task ever exits
@@ -140,11 +197,11 @@ int main(void)
   MX_GPIO_Init();
   MX_UART5_Init();
   /* USER CODE BEGIN 2 */
-  TaskHandle_t redLedHandle = NULL;
-  TaskHandle_t greenLedHandle = NULL;
+
   BaseType_t status;
 
   xMutex = xSemaphoreCreateMutex();
+
 
   status = xTaskCreate(
 		  green_led_task,        /* Function implementing the task */
@@ -162,7 +219,15 @@ int main(void)
             2,
 			//tskIDLE_PRIORITY + 1, /* Priority */
             &redLedHandle );
-
+  status = xTaskCreate(
+    		  user_button_task,        /* Function implementing the task */
+              "user_button_task",           /* Text name for debugging */
+              200,       /* Stack size in words */
+              NULL,             /* Parameter passed */
+              2,
+  			//tskIDLE_PRIORITY + 1, /* Priority */
+              &userButtonHandle );
+  next_task_handle = greenLedHandle;
   //start the freeRTOS scheduler
     vTaskStartScheduler();
 
@@ -340,8 +405,14 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : B1_Pin MEMS_INT1_Pin MEMS_INT2_Pin TP_INT1_Pin */
-  GPIO_InitStruct.Pin = B1_Pin|MEMS_INT1_Pin|MEMS_INT2_Pin|TP_INT1_Pin;
+  /*Configure GPIO pin : PA0 */
+  GPIO_InitStruct.Pin = GPIO_PIN_0;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : MEMS_INT1_Pin MEMS_INT2_Pin TP_INT1_Pin */
+  GPIO_InitStruct.Pin = MEMS_INT1_Pin|MEMS_INT2_Pin|TP_INT1_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_EVT_RISING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
