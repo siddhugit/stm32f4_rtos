@@ -21,10 +21,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "stdio.h"
-#include "FreeRTOS.h"
-#include "task.h"
-#include "semphr.h"
+
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -43,17 +40,38 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+RTC_HandleTypeDef hrtc;
 
+UART_HandleTypeDef huart5;
 
 /* USER CODE BEGIN PV */
 UART_HandleTypeDef huart5;
 SemaphoreHandle_t xMutex;
+
+TaskHandle_t handle_led_task = NULL;
+TaskHandle_t handle_rtc_task = NULL;
+TaskHandle_t handle_menu_task = NULL;
+TaskHandle_t handle_print_task = NULL;
+TaskHandle_t handle_cmd_task = NULL;
+TaskHandle_t volatile next_task_handle  = NULL;
+
+TimerHandle_t handle_led_timer[4];
+TimerHandle_t rtc_timer;
+
+QueueHandle_t q_data = NULL;
+QueueHandle_t q_print = NULL;
+
+//state variable
+state_t curr_state = sMainMenu;
+
+unsigned char user_data;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_UART5_Init(void);
+static void MX_RTC_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -66,52 +84,72 @@ void vApplicationIdleHook( void )
 	HAL_PWR_EnterSLEEPMode(PWR_MAINREGULATOR_ON, PWR_SLEEPENTRY_WFI);
 }
 
-int __io_putchar(int ch)
+//int __io_putchar(int ch)
+//{
+//	xSemaphoreTake( xMutex, portMAX_DELAY );
+//    /* Support printf over UART */
+//    (void)HAL_UART_Transmit(&huart5, (uint8_t*)&ch, 1, 0xFFFFU);
+//    xSemaphoreGive( xMutex );
+//    return ch;
+//}
+
+/* This function called from UART interrupt handler , hence executes in interrupt context */
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
-	xSemaphoreTake( xMutex, portMAX_DELAY );
-    /* Support printf over UART */
-    (void)HAL_UART_Transmit(&huart5, (uint8_t*)&ch, 1, 0xFFFFU);
-    xSemaphoreGive( xMutex );
-    return ch;
+	uint8_t dummy;
+
+	for(uint32_t i = 0 ; i < 4000 ; i++);
+
+	if(! xQueueIsQueueFullFromISR(q_data))
+	{
+		/*Enqueue data byte */
+		xQueueSendFromISR(q_data , (void*)&user_data , NULL);
+	}else{
+		if(user_data == '\n')
+		{
+			/*Make sure that last data byte of the queue is '\n' */
+			xQueueReceiveFromISR(q_data,(void*)&dummy,NULL);
+			xQueueSendFromISR(q_data ,(void*)&user_data , NULL);
+		}
+	}
+
+	/*Send notification to command handling task if user_data = '\n' */
+	if( user_data == '\n' ){
+		/*send notification to command handling task */
+		xTaskNotifyFromISR (handle_cmd_task,0,eNoAction,NULL);
+	}
+
+	/* Enable UART data byte reception again in IT mode */
+	 HAL_UART_Receive_IT(&huart5, (uint8_t*)&user_data, 1);
 }
 
-void green_led_task( void * args )
+void led_effect_callback(TimerHandle_t xTimer)
 {
-	uint32_t duration_in_ms = 6000;
-	TickType_t last_wakeup_tick_count = xTaskGetTickCount();
-    for( ;; )
-    {
-    	printf("grn_led_task with vTaskDelay\r\n");
-    	 HAL_GPIO_TogglePin(GPIOG, GPIO_PIN_13);
+	 int id;
+	 id = ( uint32_t ) pvTimerGetTimerID( xTimer );
 
-		// Delay for 500 milliseconds (0.5 seconds)
-    	 //TickType_t xTicks = pdMS_TO_TICKS(duration_in_ms);
-    	 TickType_t xTicks = pdMS_TO_TICKS(duration_in_ms);
-    	 //vTaskDelay(xTicks);
-    	 vTaskDelayUntil(&last_wakeup_tick_count, xTicks);
-    	 //HAL_Delay(500);
-    }
-    vTaskDelete( NULL ); // Delete if task ever exits
+	 switch(id)
+	 {
+	 case 1 :
+		 LED_effect1();
+		 break;
+	 case 2:
+		 LED_effect2();
+		 break;
+	 case 3:
+		 LED_effect3();
+		 break;
+	 case 4:
+		 LED_effect4();
+	 }
+
 }
 
-void red_led_task( void * args )
+void rtc_report_callback( TimerHandle_t xTimer )
 {
-	uint32_t duration_in_ms = 2000;
-	TickType_t last_wakeup_tick_count = xTaskGetTickCount();
-    for( ;; )
-    {
-    	printf("red_led_task with vTaskDelay\r\n");
-    	 HAL_GPIO_TogglePin(GPIOG,  GPIO_PIN_14);
-
-		// Delay for 500 milliseconds (0.5 seconds)
-    	 //TickType_t xTicks = pdMS_TO_TICKS(duration_in_ms);
-    	 TickType_t xTicks = pdMS_TO_TICKS(duration_in_ms);
-    	 //vTaskDelay(xTicks);
-    	 vTaskDelayUntil(&last_wakeup_tick_count, xTicks);
-		//HAL_Delay(250);
-    }
-    vTaskDelete( NULL ); // Delete if task ever exits
+	 show_time_date_itm();
 }
+
 /* USER CODE END 0 */
 
 /**
@@ -144,30 +182,40 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_UART5_Init();
+  MX_RTC_Init();
   /* USER CODE BEGIN 2 */
-  TaskHandle_t redLedHandle = NULL;
-  TaskHandle_t greenLedHandle = NULL;
   BaseType_t status;
 
   xMutex = xSemaphoreCreateMutex();
 
-  status = xTaskCreate(
-		  green_led_task,        /* Function implementing the task */
-          "green-led-task",           /* Text name for debugging */
-          200,       /* Stack size in words */
-          NULL,             /* Parameter passed */
-          2,
-		  //tskIDLE_PRIORITY + 1, /* Priority */
-          &greenLedHandle );
-  status = xTaskCreate(
-  		  red_led_task,        /* Function implementing the task */
-            "red-led-task",           /* Text name for debugging */
-            200,       /* Stack size in words */
-            NULL,             /* Parameter passed */
-            2,
-			//tskIDLE_PRIORITY + 1, /* Priority */
-            &redLedHandle );
+  status = xTaskCreate(led_task, "led_task", 200, NULL, 2,&handle_led_task );
+  configASSERT(status == pdPASS);
 
+  status = xTaskCreate(rtc_task, "rtc_task", 200, NULL, 2,&handle_rtc_task );
+  configASSERT(status == pdPASS);
+
+  status = xTaskCreate(print_task, "print_task", 200, NULL, 2,&handle_print_task );
+  configASSERT(status == pdPASS);
+
+  status = xTaskCreate(cmd_task, "cmd_task", 200, NULL, 2,&handle_cmd_task );
+  configASSERT(status == pdPASS);
+
+  status = xTaskCreate(menu_task, "menu_task", 200, NULL, 2,&handle_menu_task );
+  configASSERT(status == pdPASS);
+
+  q_data = xQueueCreate( 10, sizeof(char));
+  configASSERT(q_data != NULL);
+
+  q_print = xQueueCreate( 10, sizeof(void*));
+  configASSERT(q_print != NULL);
+
+  for(int i = 0; i <  4; ++i)
+  {
+	  handle_led_timer[i] = xTimerCreate("led_timer", pdMS_TO_TICKS(500), pdTRUE, (void*)(i+1), led_effect_callback);
+  }
+  rtc_timer = xTimerCreate ("rtc_report_timer",pdMS_TO_TICKS(1000),pdTRUE,NULL,rtc_report_callback);
+
+  HAL_UART_Receive_IT(&huart5, &user_data, 1);
   //start the freeRTOS scheduler
     vTaskStartScheduler();
 
@@ -206,9 +254,10 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI|RCC_OSCILLATORTYPE_LSI;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
   RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+  RCC_OscInitStruct.LSIState = RCC_LSI_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
   RCC_OscInitStruct.PLL.PLLM = 8;
@@ -233,6 +282,41 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+}
+
+/**
+  * @brief RTC Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_RTC_Init(void)
+{
+
+  /* USER CODE BEGIN RTC_Init 0 */
+
+  /* USER CODE END RTC_Init 0 */
+
+  /* USER CODE BEGIN RTC_Init 1 */
+
+  /* USER CODE END RTC_Init 1 */
+
+  /** Initialize RTC Only
+  */
+  hrtc.Instance = RTC;
+  hrtc.Init.HourFormat = RTC_HOURFORMAT_12;
+  hrtc.Init.AsynchPrediv = 127;
+  hrtc.Init.SynchPrediv = 255;
+  hrtc.Init.OutPut = RTC_OUTPUT_DISABLE;
+  hrtc.Init.OutPutPolarity = RTC_OUTPUT_POLARITY_HIGH;
+  hrtc.Init.OutPutType = RTC_OUTPUT_TYPE_OPENDRAIN;
+  if (HAL_RTC_Init(&hrtc) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN RTC_Init 2 */
+
+  /* USER CODE END RTC_Init 2 */
+
 }
 
 /**
@@ -478,14 +562,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   GPIO_InitStruct.Alternate = GPIO_AF4_I2C3;
   HAL_GPIO_Init(I2C3_SDA_GPIO_Port, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : I2C3_SCL_Pin */
-  GPIO_InitStruct.Pin = I2C3_SCL_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_OD;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStruct.Alternate = GPIO_AF4_I2C3;
-  HAL_GPIO_Init(I2C3_SCL_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pins : STLINK_RX_Pin STLINK_TX_Pin */
   GPIO_InitStruct.Pin = STLINK_RX_Pin|STLINK_TX_Pin;
