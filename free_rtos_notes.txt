@@ -122,3 +122,21 @@ HAL_RTC_SetDate(
 HAL_RTC_GetTime()
 HAL_RTC_GetDate()
 
+Semaphores
+Semaphores are used for tasks or interrupts synchronization. semaphore count means number of task that can acquire it without blocking.
+When multiple tasks are waiting for a semaphore to be available, the task with highest priority will get semaphore. If all tasks are of same priority, then semaphore is given on first come first server basis.
+Binary semaphore - Maximum value is 1. 
+Counting semaphore - Value is more than 1.
+Semaphore handle type is same for both i.e. xSemaphoreHandle 
+Create semaphore
+SemaphoreHandle_t xSemaphoreCreateBinary( void ); - Binary semaphore
+SemaphoreHandle_t xSemaphoreCreateCounting( UBaseType_t uxMaxCount,UBaseType_t uxInitialCount); - Counting semaphore
+When binary semaphore is created the initial value is 0, i.e. it is not available, so it has to be given first before it can be taken
+Semaphore opearations
+xSemaphoreGive() and xSemaphoreTake()
+The semaphore count can never exceed the maximum value. i.e. in case of binary semaphore thev count will never exceed 1.
+
+Mutex
+Advantages of mutex over binary semaphore
+The major difference is mutex has priority inheritence property which is useful in avoiding priority inversion problem.
+taskENTER_CRITICAL() and taskEXIT_CRITICAL() can also be used to safeguard the critical section. However this is platform dependant. taskENTER_CRITICAL() is disabling context switching too.
